@@ -75,6 +75,10 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 .last-updated{font-size:12px;color:var(--muted)}
 .common-picker{display:flex;flex-direction:column;gap:8px;margin-bottom:20px}
 .common-picker-label{font-size:13px;color:var(--muted)}
+.stats-bar{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
+.stat-card{background:rgba(255,255,255,0.03);border-radius:10px;padding:14px 16px;flex:1;min-width:150px;border:1px solid rgba(255,255,255,0.04)}
+.stat-value{font-size:19px;font-weight:700;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat-label{font-size:11px;color:var(--muted);margin-top:4px}
 .common-chips{display:flex;gap:10px;flex-wrap:wrap}
 .chip{display:flex;align-items:center;gap:8px;padding:6px 12px 6px 6px;border-radius:20px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);cursor:pointer;user-select:none;transition:.12s}
 .chip img{width:26px;height:26px;border-radius:50%;object-fit:cover;background:var(--avatar-placeholder)}
@@ -134,6 +138,7 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 </header>
 <main>
 <input id="searchBar" type="text" placeholder="Rechercher un jeu...">
+<div class="stats-bar" id="statsBar" style="display:none;"></div>
 <div class="refresh-row">
 <button class="refresh-btn" id="refreshBtn">🔄 Actualiser</button>
 <span class="last-updated" id="lastUpdated"></span>
@@ -418,6 +423,37 @@ async function mapLimit(items, limit, fn){
   return results;
 }
 
+function computeAndRenderStats(){
+  const bar = document.getElementById("statsBar");
+  if(allGames.length===0){ bar.style.display="none"; return; }
+
+  let totalMinutes = 0;
+  const minutesByOwner = {};
+  let topGame = null, topGameMinutes = -1;
+
+  allGames.forEach(g=>{
+    const gt = getTotalPlaytime(g.appid);
+    totalMinutes += gt;
+    if(gt > topGameMinutes){ topGameMinutes = gt; topGame = g; }
+    const pt = gamePlaytimeByOwner[g.appid] || {};
+    Object.keys(pt).forEach(oid=>{ minutesByOwner[oid] = (minutesByOwner[oid]||0) + pt[oid]; });
+  });
+
+  let topOwnerId = null, topOwnerMinutes = -1;
+  Object.keys(minutesByOwner).forEach(oid=>{
+    if(minutesByOwner[oid] > topOwnerMinutes){ topOwnerMinutes = minutesByOwner[oid]; topOwnerId = oid; }
+  });
+  const topOwnerName = topOwnerId!==null && playersData[topOwnerId] ? playersData[topOwnerId].personaname : "—";
+
+  bar.style.display = "flex";
+  bar.innerHTML = `
+    <div class="stat-card"><div class="stat-value">${allGames.length}</div><div class="stat-label">Jeux uniques dans la bibliothèque</div></div>
+    <div class="stat-card"><div class="stat-value">${formatPlaytime(totalMinutes)}</div><div class="stat-label">Temps de jeu cumulé (tous confondus)</div></div>
+    <div class="stat-card"><div class="stat-value">👑 ${topOwnerName}</div><div class="stat-label">Le no-life du groupe (${formatPlaytime(topOwnerMinutes>0?topOwnerMinutes:0)})</div></div>
+    <div class="stat-card"><div class="stat-value">🏆 ${topGame ? topGame.name : "—"}</div><div class="stat-label">Jeu le plus chronophage (${formatPlaytime(topGameMinutes>0?topGameMinutes:0)})</div></div>
+  `;
+}
+
 function showSkeletons(n){
   const grid=document.getElementById("grid");
   grid.className = "grid";
@@ -448,7 +484,7 @@ async function loadLibrary(forceFresh){
     if(cachedOwned){ownedAppIdsByOwner={};Object.keys(cachedOwned).forEach(k=>ownedAppIdsByOwner[k]=new Set(cachedOwned[k]))}
     const cachedPlaytime=loadCache("sf_playtime");
     if(cachedPlaytime){gamePlaytimeByOwner=cachedPlaytime}
-    if(allGames.length>0){loader.style.display="none";grid.style.display="grid";renderGrid()}
+    if(allGames.length>0){loader.style.display="none";grid.style.display="grid";renderGrid();computeAndRenderStats();}
   }
 
   if(!API_KEY||STEAM_IDS.length===0){openSetup();return}
@@ -490,6 +526,7 @@ async function loadLibrary(forceFresh){
     saveCache("sf_playtime",gamePlaytimeByOwner);
 
     loader.style.display="none";grid.style.display="grid";renderGrid();
+    computeAndRenderStats();
     setLastUpdated();
   }catch(err){
     loader.style.display="none";
