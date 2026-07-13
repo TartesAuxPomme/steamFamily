@@ -181,7 +181,6 @@ let STEAM_IDS = JSON.parse(localStorage.getItem("sf_steamIds") || "[]");
 let allGames = [], playersData = {};
 let ownedAppIdsByOwner = {}; // { steamid: Set(appid) } — jeux de base uniquement
 const appDetailsCache = {}; // { appid: data|null }
-const dlcOwnershipCache = {}; // { gameAppid: { dlcAppid: [ownerIds] } }
 let currentDetailsAppId = null; // évite qu'un vieux fetch écrase l'affichage du jeu courant
 
 function loadCache(k){try{const s=localStorage.getItem(k);return s?JSON.parse(s):null}catch{return null}}
@@ -368,28 +367,14 @@ async function loadLibrary(forceFresh){
 
 // --- Détails d'un jeu + DLC ---
 
-// GetOwnedGames ne renvoie quasiment jamais les DLC dans la liste normale des
-// jeux, même quand on les possède. Pour vérifier une possession de DLC, il
-// faut interroger chaque possesseur avec le paramètre non-documenté
-// appids_filter, qui lui renvoie bien les DLC filtrés s'ils sont possédés.
-async function checkDlcOwnership(dlcIds){
-  const filterParams = dlcIds.map((id,i)=>`appids_filter[${i}]=${id}`).join("&");
-  const results = await mapLimit(STEAM_IDS, 6, async ownerId=>{
-    try{
-      const url = `https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=${API_KEY}&steamid=${ownerId}&include_appinfo=0&include_played_free_games=1&${filterParams}`;
-      const data = await fetchJson(url);
-      const games = (data.response && data.response.games) ? data.response.games : [];
-      return {ownerId, owned: games.map(g=>Number(g.appid))};
-    }catch(e){
-      return {ownerId, owned: []};
-    }
-  });
-  const ownersByAppid = {};
-  dlcIds.forEach(id=>{ownersByAppid[id]=[]});
-  results.forEach(({ownerId, owned})=>{
-    owned.forEach(aid=>{ if(ownersByAppid[aid]) ownersByAppid[aid].push(ownerId) });
-  });
-  return ownersByAppid;
+// IMPORTANT : l'API Web Steam publique ne permet pas de vérifier de façon
+// fiable si un tiers possède un DLC (même le paramètre non-documenté
+// appids_filter ne fonctionne pas pour les DLC, seulement pour les jeux).
+// On utilise donc la liste normale des jeux possédés : certains DLC y
+// apparaissent (ceux qui ont leur propre icône/exécutable Steam), mais ce
+// n'est PAS exhaustif — d'où le badge "Non détecté" plutôt que "Non possédé".
+function getOwnersOfAppId(appid){
+  return STEAM_IDS.filter(id => ownedAppIdsByOwner[id] && ownedAppIdsByOwner[id].has(Number(appid)));
 }
 
 async function getAppDetails(appid){
@@ -453,27 +438,22 @@ async function openGameDetails(g){
     loaderEl.outerHTML = `<div class="dlc-grid" id="dlcGrid-${thisAppId}"><div class="dlc-loader">Chargement de ${dlcIds.length} DLC…</div></div>`;
 
     // Noms/images des DLC (limité en concurrence pour éviter le rate-limit Steam)
-    // + vérification réelle de possession en parallèle.
-    const [detailsResults, ownershipMap] = await Promise.all([
-      mapLimit(dlcIds, 5, id => getAppDetails(id).then(d=>({id,d})).catch(()=>({id,d:null}))),
-      dlcOwnershipCache[thisAppId] ? Promise.resolve(dlcOwnershipCache[thisAppId]) : checkDlcOwnership(dlcIds)
-    ]);
-    if(currentDetailsAppId !== thisAppId) return; // vérif à nouveau après les fetch DLC
-    dlcOwnershipCache[thisAppId] = ownershipMap;
+    const detailsResults = await mapLimit(dlcIds, 5, id => getAppDetails(id).then(d=>({id,d})).catch(()=>({id,d:null})));
+    if(currentDetailsAppId !== thisAppId) return;
 
     const dlcGrid = document.getElementById(`dlcGrid-${thisAppId}`);
     if(!dlcGrid) return;
 
     dlcGrid.innerHTML="";
     detailsResults.forEach(({id,d})=>{
-      const owners = ownershipMap[id] || [];
+      const owners = getOwnersOfAppId(id);
       const name = (d && d.name) ? d.name : ("DLC "+id);
       const img = (d && d.header_image) ? d.header_image : `https://cdn.cloudflare.steamstatic.com/steam/apps/${id}/header.jpg`;
       const card = document.createElement("div");
       card.className = "dlc-card" + (owners.length ? "" : " not-owned");
       const ownersHtml = owners.length
         ? `<div class="dlc-owners">${ownersAvatarsHtml(owners)}</div>`
-        : `<div class="dlc-badge">Non possédé</div>`;
+        : `<div class="dlc-badge" title="Steam ne fournit pas d'API fiable pour vérifier la possession des DLC par un tiers — ce badge signifie juste qu'on ne l'a pas trouvé dans la bibliothèque visible.">Non détecté</div>`;
       card.innerHTML = `<img class="dlc-img" loading="lazy" src="${img}" alt="${name}"><div class="dlc-name">${name}</div>${ownersHtml}<a class="dlc-link" href="https://store.steampowered.com/app/${id}" target="_blank" rel="noopener">Voir sur Steam ↗</a>`;
       dlcGrid.appendChild(card);
     });
