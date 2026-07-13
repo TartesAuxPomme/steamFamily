@@ -40,19 +40,10 @@ main{padding:28px;max-width:1250px;margin:0 auto}
 .error{color:#ffb4b4}
 select,input[type="text"],input[type="password"]{padding:10px;border-radius:8px;background:#111a24;color:#fff;border:1px solid rgba(255,255,255,0.08)}
 input[type="text"],input[type="password"]{width:100%;margin-bottom:15px;box-sizing:border-box}
-.roulette-container{text-align:center;padding:60px 20px;margin-top:40px}
-.roulette-btn{padding:16px 32px;background:linear-gradient(135deg,var(--accent),#0b67a4);border:none;border-radius:12px;color:#fff;font-size:16px;font-weight:700;cursor:pointer;box-shadow:0 8px 20px rgba(27,138,209,0.4);transition:all .2s}
-.roulette-btn:hover{transform:translateY(-2px);box-shadow:0 12px 30px rgba(27,138,209,0.6)}
-.roulette-btn:active{transform:translateY(0)}
-.roulette-modal,.setup-modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:2000;align-items:center;justify-content:center;padding:20px;overflow-y:auto}
-.roulette-modal.active,.setup-modal.active{display:flex}
-.roulette-content,.setup-content{background:var(--panel);border-radius:16px;padding:40px 20px;max-width:90%;width:500px;text-align:center;animation:slideIn .3s;margin:auto}
-.setup-content{text-align:left}
+.setup-modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:2000;align-items:center;justify-content:center;padding:20px;overflow-y:auto}
+.setup-modal.active{display:flex}
+.setup-content{background:var(--panel);border-radius:16px;padding:40px 20px;max-width:90%;width:500px;text-align:left;animation:slideIn .3s;margin:auto}
 @keyframes slideIn{from{transform:translateY(-30px);opacity:0}to{transform:translateY(0);opacity:1}}
-.roulette-game-poster{width:100%;max-width:300px;aspect-ratio:2/3;margin:20px auto;border-radius:12px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,0.5)}
-.roulette-game-poster img{width:100%;height:100%;object-fit:cover}
-.roulette-game-name{font-size:24px;font-weight:700;margin:20px 0;word-wrap:break-word}
-.roulette-owners{display:flex;gap:12px;justify-content:center;margin:20px 0;flex-wrap:wrap}
 .close-modal,.save-setup{background:rgba(255,255,255,0.1);border:none;padding:12px 24px;border-radius:8px;color:#fff;font-size:14px;cursor:pointer;margin-top:10px}
 .close-modal:hover,.save-setup:hover{background:rgba(255,255,255,0.2)}
 .save-setup{background:var(--accent)}
@@ -61,6 +52,19 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 .field{margin-bottom:16px}
 .hint{font-size:12px;color:var(--muted);margin-top:-10px;margin-bottom:16px;line-height:1.5}
 .setup-title{margin-top:0}
+.refresh-row{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.refresh-btn{padding:8px 16px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#e6eef6;font-size:13px;cursor:pointer}
+.refresh-btn:hover{background:rgba(255,255,255,0.12)}
+.refresh-btn:disabled{opacity:0.5;cursor:default}
+.last-updated{font-size:12px;color:var(--muted)}
+.common-picker{display:flex;flex-direction:column;gap:8px;margin-bottom:20px}
+.common-picker-label{font-size:13px;color:var(--muted)}
+.common-chips{display:flex;gap:10px;flex-wrap:wrap}
+.chip{display:flex;align-items:center;gap:8px;padding:6px 12px 6px 6px;border-radius:20px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);cursor:pointer;user-select:none;transition:.12s}
+.chip img{width:26px;height:26px;border-radius:50%;object-fit:cover;background:var(--avatar-placeholder)}
+.chip span{font-size:13px}
+.chip.selected{background:rgba(27,138,209,0.2);border-color:var(--accent)}
+.result-count{font-size:13px;color:var(--muted);margin-bottom:12px}
 .details-modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:2000;align-items:flex-start;justify-content:center;padding:40px 20px;overflow-y:auto}
 .details-modal.active{display:flex}
 .details-content{background:var(--panel);border-radius:16px;padding:30px;max-width:90%;width:800px;text-align:left;animation:slideIn .3s;margin:auto}
@@ -87,7 +91,7 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 .dlc-link{font-size:12px;color:var(--accent);text-decoration:none;margin-top:auto}
 .dlc-link:hover{text-decoration:underline}
 .details-close{position:sticky;top:0;float:right}
-@media (max-width:768px){.roulette-content,.setup-content{padding:30px 15px}.roulette-game-name{font-size:20px}.roulette-game-poster{max-width:250px}.details-content{padding:20px}.details-header{gap:16px}.details-poster{width:140px}}
+@media (max-width:768px){.setup-content{padding:30px 15px}.details-content{padding:20px}.details-header{gap:16px}.details-poster{width:140px}}
 </style>
 </head>
 <body>
@@ -103,6 +107,14 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 </header>
 <main>
 <input id="searchBar" type="text" placeholder="Rechercher un jeu...">
+<div class="refresh-row">
+<button class="refresh-btn" id="refreshBtn">🔄 Actualiser</button>
+<span class="last-updated" id="lastUpdated"></span>
+</div>
+<div class="common-picker">
+<span class="common-picker-label">Jeux en commun avec : (clique un ou plusieurs amis, aucun = tout le monde)</span>
+<div class="common-chips" id="commonChips"></div>
+</div>
 <div class="controls">
 <div class="slider-container">
 <span>Taille :</span>
@@ -114,27 +126,12 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 <option value="copiesAsc">Copies ↑</option>
 <option value="copiesDesc">Copies ↓</option>
 </select>
-<select id="ownerFilter">
-<option value="all">Tous les jeux</option>
-</select>
 </div>
+<div class="result-count" id="resultCount"></div>
 <div id="loader" class="loader" style="display:none;">Chargement…</div>
 <div id="error" class="error" style="display:none;"></div>
 <div id="grid" class="grid" style="display:none;"></div>
-<div class="roulette-container">
-<button class="roulette-btn" id="rouletteBtn">🎲 Jeu Aléatoire</button>
-</div>
 </main>
-
-<div class="roulette-modal" id="rouletteModal">
-<div class="roulette-content">
-<h2>🎲 Jeu Aléatoire</h2>
-<div class="roulette-game-poster" id="modalPoster"></div>
-<div class="roulette-game-name" id="modalName"></div>
-<div class="roulette-owners" id="modalOwners"></div>
-<button class="close-modal" id="closeModal">Fermer</button>
-</div>
-</div>
 
 <div class="details-modal" id="detailsModal">
 <div class="details-content">
@@ -182,6 +179,17 @@ let allGames = [], playersData = {};
 let ownedAppIdsByOwner = {}; // { steamid: Set(appid) } — jeux de base uniquement
 const appDetailsCache = {}; // { appid: data|null }
 let currentDetailsAppId = null; // évite qu'un vieux fetch écrase l'affichage du jeu courant
+let selectedOwners = new Set(); // pour le sélecteur "jeux en commun"
+
+function loadPrefs(){try{return JSON.parse(localStorage.getItem("sf_prefs")||"{}")}catch{return {}}}
+function savePrefs(){
+  saveCache("sf_prefs", {
+    search: document.getElementById("searchBar").value,
+    sort: document.getElementById("sortSelect").value,
+    size: document.getElementById("sizeSlider").value,
+    selectedOwners: Array.from(selectedOwners)
+  });
+}
 
 function loadCache(k){try{const s=localStorage.getItem(k);return s?JSON.parse(s):null}catch{return null}}
 function saveCache(k,d){try{localStorage.setItem(k,JSON.stringify(d))}catch{}}
@@ -192,30 +200,51 @@ function createOwner(n,a){const o=document.createElement("div");o.className="own
 function createCard(g){const c=document.createElement("div");c.className="game-card";c.dataset.appid=String(g.appid);const p=document.createElement("div");p.className="poster";p.innerHTML=`<img loading="lazy" src="https://cdn.cloudflare.steamstatic.com/steam/apps/${g.appid}/library_600x900.jpg">`;const m=document.createElement("div");m.className="meta";m.innerHTML=`<div class="name">${g.name}</div><div class="copies">${g.owners.length} copie${g.owners.length>1?"s":""}</div>`;const t=document.createElement("div");t.className="toolbox";g.owners.forEach(oid=>{const pl=playersData[oid];t.appendChild(createOwner(pl?(pl.personaname||oid):oid,pl?(pl.avatarfull||""):""))});c.appendChild(p);c.appendChild(m);c.appendChild(t);c.addEventListener("click",()=>openGameDetails(g));return c}
 
 function renderGrid(){
-  const grid=document.getElementById("grid"),search=document.getElementById("searchBar").value.toLowerCase(),ownerFilter=document.getElementById("ownerFilter").value,sortValue=document.getElementById("sortSelect").value;
-  let filtered=allGames.filter(g=>{if(search&&!g.name.toLowerCase().includes(search))return false;if(ownerFilter!=="all"&&!g.owners.includes(ownerFilter))return false;return true});
+  const grid=document.getElementById("grid"),search=document.getElementById("searchBar").value.toLowerCase(),sortValue=document.getElementById("sortSelect").value;
+  let filtered=allGames.filter(g=>{
+    if(search&&!g.name.toLowerCase().includes(search))return false;
+    if(selectedOwners.size>0){
+      for(const oid of selectedOwners){ if(!g.owners.includes(oid)) return false }
+    }
+    return true;
+  });
   filtered.sort((a,b)=>{const nA=a.name.toLowerCase(),nB=b.name.toLowerCase(),cA=a.owners.length,cB=b.owners.length;switch(sortValue){case"az":return nA.localeCompare(nB);case"za":return nB.localeCompare(nA);case"copiesAsc":return cA-cB;case"copiesDesc":return cB-cA;default:return 0}});
   grid.innerHTML="";
   if(filtered.length===0){grid.innerHTML='<div class="empty">Aucun jeu trouvé.</div>'}
   filtered.forEach(g=>grid.appendChild(createCard(g)));
+
+  const countEl=document.getElementById("resultCount");
+  if(selectedOwners.size>=2){
+    const names=Array.from(selectedOwners).map(oid=>playersData[oid]?playersData[oid].personaname:oid);
+    countEl.textContent = `${filtered.length} jeu${filtered.length>1?"x":""} en commun entre ${names.join(", ")}`;
+  } else if(selectedOwners.size===1){
+    const oid=Array.from(selectedOwners)[0];
+    const name=playersData[oid]?playersData[oid].personaname:oid;
+    countEl.textContent = `${filtered.length} jeu${filtered.length>1?"x":""} chez ${name}`;
+  } else {
+    countEl.textContent = `${filtered.length} jeu${filtered.length>1?"x":""} au total`;
+  }
+  savePrefs();
 }
 
-document.getElementById("sizeSlider").addEventListener("input",e=>document.documentElement.style.setProperty("--card-size",e.target.value+"px"));
+document.getElementById("sizeSlider").addEventListener("input",e=>{document.documentElement.style.setProperty("--card-size",e.target.value+"px");savePrefs()});
 document.getElementById("searchBar").addEventListener("input",renderGrid);
 document.getElementById("sortSelect").addEventListener("change",renderGrid);
-document.getElementById("ownerFilter").addEventListener("change",renderGrid);
 
-document.getElementById("rouletteBtn").addEventListener("click",()=>{
-  if(allGames.length===0){alert("Aucun jeu disponible pour la roulette !");return}
-  const rg=allGames[Math.floor(Math.random()*allGames.length)],modal=document.getElementById("rouletteModal"),poster=document.getElementById("modalPoster"),name=document.getElementById("modalName"),owners=document.getElementById("modalOwners");
-  poster.innerHTML=`<img src="https://cdn.cloudflare.steamstatic.com/steam/apps/${rg.appid}/library_600x900.jpg">`;
-  name.textContent=rg.name;
-  owners.innerHTML="";
-  rg.owners.forEach(oid=>{const pl=playersData[oid];if(pl)owners.appendChild(createOwner(pl.personaname,pl.avatarfull||pl.avatar))});
-  modal.classList.add("active");
+document.getElementById("refreshBtn").addEventListener("click",()=>loadLibrary(true));
+
+document.addEventListener("keydown",e=>{
+  if(e.key!=="Escape") return;
+  const detailsModal=document.getElementById("detailsModal"), setupModal=document.getElementById("setupModal");
+  if(detailsModal.classList.contains("active")){currentDetailsAppId=null;detailsModal.classList.remove("active")}
+  else if(setupModal.classList.contains("active") && API_KEY && STEAM_IDS.length>0){setupModal.classList.remove("active")}
 });
-document.getElementById("closeModal").addEventListener("click",()=>document.getElementById("rouletteModal").classList.remove("active"));
-document.getElementById("rouletteModal").addEventListener("click",e=>{if(e.target.id==="rouletteModal")document.getElementById("rouletteModal").classList.remove("active")});
+
+function setLastUpdated(){
+  const el=document.getElementById("lastUpdated");
+  const now=new Date();
+  el.textContent = "Dernière mise à jour : " + now.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});
+}
 
 function updateOnline(pls){
   const c=document.getElementById("onlinePlayers");c.innerHTML="";
@@ -228,7 +257,23 @@ function updateOnline(pls){
     c.appendChild(d);
   });
 }
-function populateOwner(pls){const s=document.getElementById("ownerFilter");s.innerHTML='<option value="all">Tous les jeux</option>';pls.forEach(p=>{const o=document.createElement("option");o.value=p.steamid;o.textContent=`Jeux de ${p.personaname}`;s.appendChild(o)})}
+function populateOwner(pls){
+  const c=document.getElementById("commonChips");
+  c.innerHTML="";
+  pls.forEach(p=>{
+    const chip=document.createElement("div");
+    chip.className="chip"+(selectedOwners.has(p.steamid)?" selected":"");
+    chip.dataset.steamid=p.steamid;
+    chip.innerHTML=`<img src="${p.avatarfull||p.avatar||""}" alt="${p.personaname}"><span>${p.personaname}</span>`;
+    chip.addEventListener("click",()=>{
+      if(selectedOwners.has(p.steamid)) selectedOwners.delete(p.steamid);
+      else selectedOwners.add(p.steamid);
+      chip.classList.toggle("selected");
+      renderGrid();
+    });
+    c.appendChild(chip);
+  });
+}
 
 // --- Setup modal ---
 const setupModal=document.getElementById("setupModal");
@@ -356,6 +401,7 @@ async function loadLibrary(forceFresh){
     saveCache("sf_ownedAppIds",ownedForCache);
 
     loader.style.display="none";grid.style.display="grid";renderGrid();
+    setLastUpdated();
   }catch(err){
     loader.style.display="none";
     if(allGames.length===0){
@@ -466,6 +512,15 @@ async function openGameDetails(g){
 
 document.getElementById("closeDetails").addEventListener("click",()=>{currentDetailsAppId=null;document.getElementById("detailsModal").classList.remove("active")});
 document.getElementById("detailsModal").addEventListener("click",e=>{if(e.target.id==="detailsModal"){currentDetailsAppId=null;document.getElementById("detailsModal").classList.remove("active")}});
+
+// Restaure les préférences (recherche/tri/taille/amis sélectionnés) de la session précédente
+(function restorePrefs(){
+  const prefs = loadPrefs();
+  if(prefs.search) document.getElementById("searchBar").value = prefs.search;
+  if(prefs.sort) document.getElementById("sortSelect").value = prefs.sort;
+  if(prefs.size){ document.getElementById("sizeSlider").value = prefs.size; document.documentElement.style.setProperty("--card-size", prefs.size+"px"); }
+  if(Array.isArray(prefs.selectedOwners)) selectedOwners = new Set(prefs.selectedOwners);
+})();
 
 loadLibrary(false);
 </script>
