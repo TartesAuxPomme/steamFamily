@@ -88,6 +88,17 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 .dlc-owners{display:flex;gap:6px;flex-wrap:wrap}
 .dlc-owners img{width:26px;height:26px;border-radius:50%;object-fit:cover;background:var(--avatar-placeholder)}
 .dlc-badge{font-size:11px;color:var(--muted);background:rgba(255,255,255,0.05);padding:4px 8px;border-radius:6px;display:inline-block;width:fit-content}
+.playtime-section{margin-top:26px}
+.playtime-section h3{margin:0 0 14px 0;font-size:16px;color:var(--muted);font-weight:600}
+.playtime-row{display:flex;align-items:center;gap:12px;padding:8px 0}
+.playtime-rank{font-size:15px;width:26px;flex:0 0 auto;text-align:center}
+.playtime-avatar{width:32px;height:32px;border-radius:50%;object-fit:cover;background:var(--avatar-placeholder);flex:0 0 auto}
+.playtime-name{font-size:13px;width:110px;flex:0 0 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.playtime-bar-track{flex:1;height:16px;background:rgba(255,255,255,0.05);border-radius:8px;overflow:hidden;min-width:60px}
+.playtime-bar-fill{height:100%;width:0;border-radius:8px;background:linear-gradient(90deg,var(--accent),#5ad1ff);transition:width 0.7s cubic-bezier(.2,.8,.2,1)}
+.playtime-row.zero .playtime-bar-fill{background:rgba(255,255,255,0.12)}
+.playtime-value{font-size:12px;color:var(--muted);width:70px;flex:0 0 auto;text-align:right}
+.playtime-empty{color:var(--muted);font-size:13px;padding:6px 0}
 .dlc-link{font-size:12px;color:var(--accent);text-decoration:none;margin-top:auto}
 .dlc-link:hover{text-decoration:underline}
 .details-close{position:sticky;top:0;float:right}
@@ -177,6 +188,7 @@ let API_KEY = localStorage.getItem("sf_apiKey") || "";
 let STEAM_IDS = JSON.parse(localStorage.getItem("sf_steamIds") || "[]");
 let allGames = [], playersData = {};
 let ownedAppIdsByOwner = {}; // { steamid: Set(appid) } — jeux de base uniquement
+let gamePlaytimeByOwner = {}; // { appid: { steamid: minutes } }
 const appDetailsCache = {}; // { appid: data|null }
 let currentDetailsAppId = null; // évite qu'un vieux fetch écrase l'affichage du jeu courant
 let selectedOwners = new Set(); // pour le sélecteur "jeux en commun"
@@ -364,6 +376,8 @@ async function loadLibrary(forceFresh){
     if(cachedPlayers){cachedPlayers.forEach(p=>playersData[p.steamid]=p);populateOwner(cachedPlayers);updateOnline(cachedPlayers)}
     const cachedOwned=loadCache("sf_ownedAppIds");
     if(cachedOwned){ownedAppIdsByOwner={};Object.keys(cachedOwned).forEach(k=>ownedAppIdsByOwner[k]=new Set(cachedOwned[k]))}
+    const cachedPlaytime=loadCache("sf_playtime");
+    if(cachedPlaytime){gamePlaytimeByOwner=cachedPlaytime}
     if(allGames.length>0){loader.style.display="none";grid.style.display="grid";renderGrid()}
   }
 
@@ -384,6 +398,7 @@ async function loadLibrary(forceFresh){
 
     const gm=new Map();
     ownedAppIdsByOwner={};
+    gamePlaytimeByOwner={};
     libs.forEach(lib=>{
       ownedAppIdsByOwner[lib.id]=new Set(lib.games.map(g=>Number(g&&g.appid)).filter(Boolean));
       lib.games.forEach(g=>{
@@ -391,6 +406,8 @@ async function loadLibrary(forceFresh){
       const aid=Number(g.appid);
       if(!gm.has(aid)) gm.set(aid,{appid:aid,name:g.name||("App "+aid),owners:[]});
       gm.get(aid).owners.push(lib.id);
+      if(!gamePlaytimeByOwner[aid]) gamePlaytimeByOwner[aid]={};
+      gamePlaytimeByOwner[aid][lib.id]=Number(g.playtime_forever)||0;
     })});
 
     const finalArray=Array.from(gm.values());
@@ -399,6 +416,7 @@ async function loadLibrary(forceFresh){
     allGames=finalArray;
     const ownedForCache={};Object.keys(ownedAppIdsByOwner).forEach(k=>ownedForCache[k]=Array.from(ownedAppIdsByOwner[k]));
     saveCache("sf_ownedAppIds",ownedForCache);
+    saveCache("sf_playtime",gamePlaytimeByOwner);
 
     loader.style.display="none";grid.style.display="grid";renderGrid();
     setLastUpdated();
@@ -437,6 +455,51 @@ async function getAppDetails(appid){
   }
 }
 
+function formatPlaytime(minutes){
+  if(!minutes || minutes<=0) return "Jamais lancé";
+  if(minutes<60) return minutes+" min";
+  const hours = minutes/60;
+  return (hours>=10 ? Math.round(hours) : Math.round(hours*10)/10) + "h";
+}
+
+function renderPlaytimeSection(g){
+  const playtimes = gamePlaytimeByOwner[g.appid] || {};
+  const rows = g.owners.map(oid=>({oid, minutes: playtimes[oid]||0}));
+  rows.sort((a,b)=>b.minutes-a.minutes);
+  const maxMinutes = Math.max(1, ...rows.map(r=>r.minutes));
+  const medals = ["🥇","🥈","🥉"];
+
+  if(rows.length===0){
+    return `<div class="playtime-section"><h3>Temps de jeu</h3><div class="playtime-empty">Aucune donnée de temps de jeu.</div></div>`;
+  }
+
+  const rowsHtml = rows.map((r,i)=>{
+    const pl = playersData[r.oid];
+    const name = pl ? pl.personaname : r.oid;
+    const avatar = pl ? (pl.avatarfull||pl.avatar||"") : "";
+    const pct = Math.round((r.minutes/maxMinutes)*100);
+    const rank = medals[i] || (i+1)+".";
+    return `
+      <div class="playtime-row${r.minutes===0?" zero":""}">
+        <div class="playtime-rank">${rank}</div>
+        <img class="playtime-avatar" src="${avatar}" alt="${name}">
+        <div class="playtime-name" title="${name}">${name}</div>
+        <div class="playtime-bar-track"><div class="playtime-bar-fill" data-pct="${pct}" style="width:0"></div></div>
+        <div class="playtime-value">${formatPlaytime(r.minutes)}</div>
+      </div>`;
+  }).join("");
+
+  return `<div class="playtime-section"><h3>Temps de jeu</h3>${rowsHtml}</div>`;
+}
+
+function animatePlaytimeBars(){
+  requestAnimationFrame(()=>{
+    document.querySelectorAll(".playtime-bar-fill").forEach(el=>{
+      el.style.width = el.dataset.pct + "%";
+    });
+  });
+}
+
 function ownersAvatarsHtml(owners){
   return owners.map(oid=>{const pl=playersData[oid];const name=pl?pl.personaname:oid;const av=pl?(pl.avatarfull||pl.avatar||""):"";return `<img title="${name}" alt="${name}" src="${av}">`}).join("");
 }
@@ -452,6 +515,7 @@ function renderDetailsHeader(g){
         <a class="steam-link-btn" href="https://store.steampowered.com/app/${g.appid}" target="_blank" rel="noopener">Voir sur Steam ↗</a>
       </div>
     </div>
+    ${renderPlaytimeSection(g)}
     <div class="dlc-section">
       <h3>DLC</h3>
       <div class="dlc-loader" id="dlcLoader">Chargement des DLC…</div>
@@ -467,6 +531,7 @@ async function openGameDetails(g){
 
   body.innerHTML = renderDetailsHeader(g);
   modal.classList.add("active");
+  animatePlaytimeBars();
 
   try{
     const info = await getAppDetails(g.appid);
