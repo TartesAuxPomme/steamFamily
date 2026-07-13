@@ -61,7 +61,32 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 .field{margin-bottom:16px}
 .hint{font-size:12px;color:var(--muted);margin-top:-10px;margin-bottom:16px;line-height:1.5}
 .setup-title{margin-top:0}
-@media (max-width:768px){.roulette-content,.setup-content{padding:30px 15px}.roulette-game-name{font-size:20px}.roulette-game-poster{max-width:250px}}
+.details-modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:2000;align-items:flex-start;justify-content:center;padding:40px 20px;overflow-y:auto}
+.details-modal.active{display:flex}
+.details-content{background:var(--panel);border-radius:16px;padding:30px;max-width:90%;width:800px;text-align:left;animation:slideIn .3s;margin:auto}
+.details-header{display:flex;gap:24px;flex-wrap:wrap}
+.details-poster{width:200px;flex:0 0 auto;aspect-ratio:2/3;border-radius:10px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,0.5)}
+.details-poster img{width:100%;height:100%;object-fit:cover}
+.details-info{flex:1;min-width:220px}
+.details-info h2{margin:0 0 14px 0;font-size:22px}
+.details-owners{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+.steam-link-btn{display:inline-block;padding:10px 20px;background:var(--accent);color:#fff;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px}
+.steam-link-btn:hover{background:#0b67a4}
+.dlc-section{margin-top:26px}
+.dlc-section h3{margin:0 0 14px 0;font-size:16px;color:var(--muted);font-weight:600}
+.dlc-loader{padding:14px 0;color:var(--muted)}
+.dlc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+.dlc-card{background:rgba(255,255,255,0.04);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px}
+.dlc-card.not-owned{opacity:0.55}
+.dlc-img{width:100%;aspect-ratio:460/215;object-fit:cover;border-radius:8px;background:#182430}
+.dlc-name{font-size:13px;font-weight:600;line-height:1.3}
+.dlc-owners{display:flex;gap:6px;flex-wrap:wrap}
+.dlc-owners img{width:26px;height:26px;border-radius:50%;object-fit:cover;background:var(--avatar-placeholder)}
+.dlc-badge{font-size:11px;color:var(--muted);background:rgba(255,255,255,0.05);padding:4px 8px;border-radius:6px;display:inline-block;width:fit-content}
+.dlc-link{font-size:12px;color:var(--accent);text-decoration:none;margin-top:auto}
+.dlc-link:hover{text-decoration:underline}
+.details-close{position:sticky;top:0;float:right}
+@media (max-width:768px){.roulette-content,.setup-content{padding:30px 15px}.roulette-game-name{font-size:20px}.roulette-game-poster{max-width:250px}.details-content{padding:20px}.details-header{gap:16px}.details-poster{width:140px}}
 </style>
 </head>
 <body>
@@ -110,6 +135,13 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 </div>
 </div>
 
+<div class="details-modal" id="detailsModal">
+<div class="details-content">
+<button class="close-modal details-close" id="closeDetails">Fermer</button>
+<div id="detailsBody"></div>
+</div>
+</div>
+
 <div class="setup-modal" id="setupModal">
 <div class="setup-content">
 <h2 class="setup-title">Configuration</h2>
@@ -144,6 +176,8 @@ const PROXIES = [
 let API_KEY = localStorage.getItem("sf_apiKey") || "";
 let STEAM_IDS = JSON.parse(localStorage.getItem("sf_steamIds") || "[]");
 let allGames = [], playersData = {};
+let ownedAppIdsByOwner = {}; // { steamid: Set(appid) }
+const appDetailsCache = {}; // { appid: data|null }
 
 function loadCache(k){try{const s=localStorage.getItem(k);return s?JSON.parse(s):null}catch{return null}}
 function saveCache(k,d){try{localStorage.setItem(k,JSON.stringify(d))}catch{}}
@@ -151,7 +185,7 @@ function sameData(a,b){if(!a||!b||a.length!==b.length)return false;const sa=[...
 
 function createOwner(n,a){const o=document.createElement("div");o.className="owner";const i=document.createElement("img");i.src=a||"";i.alt=n||"";const nm=document.createElement("div");nm.className="o-name";nm.textContent=n||"";o.appendChild(i);o.appendChild(nm);return o}
 
-function createCard(g){const c=document.createElement("div");c.className="game-card";c.dataset.appid=String(g.appid);const p=document.createElement("div");p.className="poster";p.innerHTML=`<img loading="lazy" src="https://cdn.cloudflare.steamstatic.com/steam/apps/${g.appid}/library_600x900.jpg">`;const m=document.createElement("div");m.className="meta";m.innerHTML=`<div class="name">${g.name}</div><div class="copies">${g.owners.length} copie${g.owners.length>1?"s":""}</div>`;const t=document.createElement("div");t.className="toolbox";g.owners.forEach(oid=>{const pl=playersData[oid];t.appendChild(createOwner(pl?(pl.personaname||oid):oid,pl?(pl.avatarfull||""):""))});c.appendChild(p);c.appendChild(m);c.appendChild(t);return c}
+function createCard(g){const c=document.createElement("div");c.className="game-card";c.dataset.appid=String(g.appid);const p=document.createElement("div");p.className="poster";p.innerHTML=`<img loading="lazy" src="https://cdn.cloudflare.steamstatic.com/steam/apps/${g.appid}/library_600x900.jpg">`;const m=document.createElement("div");m.className="meta";m.innerHTML=`<div class="name">${g.name}</div><div class="copies">${g.owners.length} copie${g.owners.length>1?"s":""}</div>`;const t=document.createElement("div");t.className="toolbox";g.owners.forEach(oid=>{const pl=playersData[oid];t.appendChild(createOwner(pl?(pl.personaname||oid):oid,pl?(pl.avatarfull||""):""))});c.appendChild(p);c.appendChild(m);c.appendChild(t);c.addEventListener("click",()=>openGameDetails(g));return c}
 
 function renderGrid(){
   const grid=document.getElementById("grid"),search=document.getElementById("searchBar").value.toLowerCase(),ownerFilter=document.getElementById("ownerFilter").value,sortValue=document.getElementById("sortSelect").value;
@@ -263,6 +297,8 @@ async function loadLibrary(forceFresh){
     const cachedGames=loadCache("sf_gamesCache"),cachedPlayers=loadCache("sf_playersCache");
     if(cachedGames){allGames=cachedGames}
     if(cachedPlayers){cachedPlayers.forEach(p=>playersData[p.steamid]=p);populateOwner(cachedPlayers);updateOnline(cachedPlayers)}
+    const cachedOwned=loadCache("sf_ownedAppIds");
+    if(cachedOwned){ownedAppIdsByOwner={};Object.keys(cachedOwned).forEach(k=>ownedAppIdsByOwner[k]=new Set(cachedOwned[k]))}
     if(allGames.length>0){loader.style.display="none";grid.style.display="grid";renderGrid()}
   }
 
@@ -282,7 +318,10 @@ async function loadLibrary(forceFresh){
     }));
 
     const gm=new Map();
-    libs.forEach(lib=>{lib.games.forEach(g=>{
+    ownedAppIdsByOwner={};
+    libs.forEach(lib=>{
+      ownedAppIdsByOwner[lib.id]=new Set(lib.games.map(g=>Number(g&&g.appid)).filter(Boolean));
+      lib.games.forEach(g=>{
       if(!g||!g.appid)return;
       const aid=Number(g.appid);
       if(!gm.has(aid)) gm.set(aid,{appid:aid,name:g.name||("App "+aid),owners:[]});
@@ -293,6 +332,8 @@ async function loadLibrary(forceFresh){
     const oldCache=loadCache("sf_gamesCache");
     if(!sameData(oldCache,finalArray)) saveCache("sf_gamesCache",finalArray);
     allGames=finalArray;
+    const ownedForCache={};Object.keys(ownedAppIdsByOwner).forEach(k=>ownedForCache[k]=Array.from(ownedAppIdsByOwner[k]));
+    saveCache("sf_ownedAppIds",ownedForCache);
 
     loader.style.display="none";grid.style.display="grid";renderGrid();
   }catch(err){
@@ -303,6 +344,91 @@ async function loadLibrary(forceFresh){
     }
   }
 }
+
+// --- Détails d'un jeu + DLC ---
+function getOwnersOfAppId(appid){
+  return STEAM_IDS.filter(id => ownedAppIdsByOwner[id] && ownedAppIdsByOwner[id].has(Number(appid)));
+}
+
+async function getAppDetails(appid){
+  if(Object.prototype.hasOwnProperty.call(appDetailsCache, appid)) return appDetailsCache[appid];
+  try{
+    const json = await fetchJson(`https://store.steampowered.com/api/appdetails?appids=${appid}&l=french&cc=us`);
+    const entry = json && json[String(appid)];
+    const data = (entry && entry.success) ? entry.data : null;
+    appDetailsCache[appid] = data;
+    return data;
+  }catch(e){
+    appDetailsCache[appid] = null;
+    return null;
+  }
+}
+
+function ownersAvatarsHtml(owners){
+  return owners.map(oid=>{const pl=playersData[oid];const name=pl?pl.personaname:oid;const av=pl?(pl.avatarfull||pl.avatar||""):"";return `<img title="${name}" alt="${name}" src="${av}">`}).join("");
+}
+
+function renderDetailsHeader(g){
+  const owners = g.owners || [];
+  return `
+    <div class="details-header">
+      <div class="details-poster"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/${g.appid}/library_600x900.jpg" alt="${g.name}"></div>
+      <div class="details-info">
+        <h2>${g.name}</h2>
+        <div class="details-owners">${ownersAvatarsHtml(owners)}</div>
+        <a class="steam-link-btn" href="https://store.steampowered.com/app/${g.appid}" target="_blank" rel="noopener">Voir sur Steam ↗</a>
+      </div>
+    </div>
+    <div class="dlc-section">
+      <h3>DLC</h3>
+      <div class="dlc-loader" id="dlcLoader">Chargement des DLC…</div>
+    </div>
+  `;
+}
+
+async function openGameDetails(g){
+  const modal=document.getElementById("detailsModal");
+  const body=document.getElementById("detailsBody");
+  body.innerHTML = renderDetailsHeader(g);
+  modal.classList.add("active");
+
+  try{
+    const info = await getAppDetails(g.appid);
+    const dlcIds = (info && Array.isArray(info.dlc)) ? info.dlc : [];
+    const loaderEl = document.getElementById("dlcLoader");
+    if(!loaderEl) return; // modal was closed/reopened in the meantime
+
+    if(dlcIds.length===0){
+      loaderEl.outerHTML = '<div class="empty">Aucun DLC disponible pour ce jeu.</div>';
+      return;
+    }
+    loaderEl.outerHTML = `<div class="dlc-grid" id="dlcGrid"><div class="dlc-loader">Chargement de ${dlcIds.length} DLC…</div></div>`;
+    const dlcGrid = document.getElementById("dlcGrid");
+
+    const results = await Promise.all(dlcIds.map(id => getAppDetails(id).then(d=>({id,d})).catch(()=>({id,d:null}))));
+    if(!document.getElementById("dlcGrid")) return; // closed meanwhile
+
+    dlcGrid.innerHTML="";
+    results.forEach(({id,d})=>{
+      const owners = getOwnersOfAppId(id);
+      const name = (d && d.name) ? d.name : ("DLC "+id);
+      const img = (d && d.header_image) ? d.header_image : `https://cdn.cloudflare.steamstatic.com/steam/apps/${id}/header.jpg`;
+      const card = document.createElement("div");
+      card.className = "dlc-card" + (owners.length ? "" : " not-owned");
+      const ownersHtml = owners.length
+        ? `<div class="dlc-owners">${ownersAvatarsHtml(owners)}</div>`
+        : `<div class="dlc-badge">Non possédé</div>`;
+      card.innerHTML = `<img class="dlc-img" loading="lazy" src="${img}" alt="${name}"><div class="dlc-name">${name}</div>${ownersHtml}<a class="dlc-link" href="https://store.steampowered.com/app/${id}" target="_blank" rel="noopener">Voir sur Steam ↗</a>`;
+      dlcGrid.appendChild(card);
+    });
+  }catch(e){
+    const loaderEl = document.getElementById("dlcLoader");
+    if(loaderEl) loaderEl.textContent = "Impossible de charger les DLC : "+e;
+  }
+}
+
+document.getElementById("closeDetails").addEventListener("click",()=>document.getElementById("detailsModal").classList.remove("active"));
+document.getElementById("detailsModal").addEventListener("click",e=>{if(e.target.id==="detailsModal")document.getElementById("detailsModal").classList.remove("active")});
 
 loadLibrary(false);
 </script>
