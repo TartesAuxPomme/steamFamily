@@ -36,6 +36,22 @@ main{padding:28px;max-width:1250px;margin:0 auto}
 .owner{display:flex;gap:8px;align-items:center}
 .owner img{width:34px;height:34px;border-radius:50%;object-fit:cover;background:var(--avatar-placeholder)}
 .o-name{font-size:13px;max-width:90px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.view-toggle{display:flex;gap:4px;background:rgba(255,255,255,0.04);border-radius:8px;padding:3px}
+.view-toggle button{padding:6px 10px;border:none;background:transparent;color:var(--muted);border-radius:6px;cursor:pointer;font-size:14px}
+.view-toggle button.active{background:var(--accent);color:#fff}
+.grid.list-view{display:flex;flex-direction:column;gap:6px}
+.list-view .game-card{display:flex;align-items:center;gap:14px;padding:8px 12px}
+.list-view .game-card:hover{transform:none;box-shadow:none;background:rgba(255,255,255,0.06)}
+.list-view .poster{width:44px;flex:0 0 auto}
+.list-view .meta{text-align:left;padding:0;flex:1;display:flex;align-items:center;gap:14px}
+.list-view .meta .name{margin-bottom:0;flex:1}
+.list-view .toolbox{display:none}
+.skeleton-card{cursor:default}
+.skeleton-card:hover{transform:none;box-shadow:none}
+.skeleton-shimmer{background:linear-gradient(90deg,rgba(255,255,255,0.04) 25%,rgba(255,255,255,0.09) 37%,rgba(255,255,255,0.04) 63%);background-size:400% 100%;animation:shimmer 1.4s ease infinite;border-radius:8px}
+@keyframes shimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}
+.skel-line{height:12px;margin:8px 4px}
+.skel-line.short{width:60%}
 .loader,.error,.empty{text-align:center;padding:20px;color:var(--muted)}
 .error{color:#ffb4b4}
 select,input[type="text"],input[type="password"]{padding:10px;border-radius:8px;background:#111a24;color:#fff;border:1px solid rgba(255,255,255,0.08)}
@@ -136,7 +152,18 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 <option value="za">Z → A</option>
 <option value="copiesAsc">Copies ↑</option>
 <option value="copiesDesc">Copies ↓</option>
+<option value="playtimeDesc">Temps de jeu ↓</option>
+<option value="playtimeAsc">Temps de jeu ↑</option>
 </select>
+<select id="playtimeFilter">
+<option value="all">Tous les jeux</option>
+<option value="never">🕸️ Jamais joués</option>
+<option value="heavy">🔥 Très joués (100h+)</option>
+</select>
+<div class="view-toggle" id="viewToggle">
+<button data-mode="grid" class="active" title="Vue grille">▦</button>
+<button data-mode="list" title="Vue liste">☰</button>
+</div>
 </div>
 <div class="result-count" id="resultCount"></div>
 <div id="loader" class="loader" style="display:none;">Chargement…</div>
@@ -192,6 +219,7 @@ let gamePlaytimeByOwner = {}; // { appid: { steamid: minutes } }
 const appDetailsCache = {}; // { appid: data|null }
 let currentDetailsAppId = null; // évite qu'un vieux fetch écrase l'affichage du jeu courant
 let selectedOwners = new Set(); // pour le sélecteur "jeux en commun"
+let viewMode = "grid"; // "grid" | "list"
 
 function loadPrefs(){try{return JSON.parse(localStorage.getItem("sf_prefs")||"{}")}catch{return {}}}
 function savePrefs(){
@@ -199,7 +227,9 @@ function savePrefs(){
     search: document.getElementById("searchBar").value,
     sort: document.getElementById("sortSelect").value,
     size: document.getElementById("sizeSlider").value,
-    selectedOwners: Array.from(selectedOwners)
+    selectedOwners: Array.from(selectedOwners),
+    viewMode: viewMode,
+    playtimeFilter: document.getElementById("playtimeFilter").value
   });
 }
 
@@ -211,16 +241,30 @@ function createOwner(n,a){const o=document.createElement("div");o.className="own
 
 function createCard(g){const c=document.createElement("div");c.className="game-card";c.dataset.appid=String(g.appid);const p=document.createElement("div");p.className="poster";p.innerHTML=`<img loading="lazy" src="https://cdn.cloudflare.steamstatic.com/steam/apps/${g.appid}/library_600x900.jpg">`;const m=document.createElement("div");m.className="meta";m.innerHTML=`<div class="name">${g.name}</div><div class="copies">${g.owners.length} copie${g.owners.length>1?"s":""}</div>`;const t=document.createElement("div");t.className="toolbox";g.owners.forEach(oid=>{const pl=playersData[oid];t.appendChild(createOwner(pl?(pl.personaname||oid):oid,pl?(pl.avatarfull||""):""))});c.appendChild(p);c.appendChild(m);c.appendChild(t);c.addEventListener("click",()=>openGameDetails(g));return c}
 
+function getTotalPlaytime(appid){
+  const pt = gamePlaytimeByOwner[appid];
+  if(!pt) return 0;
+  return Object.values(pt).reduce((a,b)=>a+b,0);
+}
+function getMaxPlaytime(appid){
+  const pt = gamePlaytimeByOwner[appid];
+  if(!pt) return 0;
+  return Math.max(0, ...Object.values(pt));
+}
+
 function renderGrid(){
-  const grid=document.getElementById("grid"),search=document.getElementById("searchBar").value.toLowerCase(),sortValue=document.getElementById("sortSelect").value;
+  const grid=document.getElementById("grid"),search=document.getElementById("searchBar").value.toLowerCase(),sortValue=document.getElementById("sortSelect").value,playtimeFilterValue=document.getElementById("playtimeFilter").value;
   let filtered=allGames.filter(g=>{
     if(search&&!g.name.toLowerCase().includes(search))return false;
     if(selectedOwners.size>0){
       for(const oid of selectedOwners){ if(!g.owners.includes(oid)) return false }
     }
+    if(playtimeFilterValue==="never" && getTotalPlaytime(g.appid)>0) return false;
+    if(playtimeFilterValue==="heavy" && getMaxPlaytime(g.appid)<6000) return false;
     return true;
   });
-  filtered.sort((a,b)=>{const nA=a.name.toLowerCase(),nB=b.name.toLowerCase(),cA=a.owners.length,cB=b.owners.length;switch(sortValue){case"az":return nA.localeCompare(nB);case"za":return nB.localeCompare(nA);case"copiesAsc":return cA-cB;case"copiesDesc":return cB-cA;default:return 0}});
+  filtered.sort((a,b)=>{const nA=a.name.toLowerCase(),nB=b.name.toLowerCase(),cA=a.owners.length,cB=b.owners.length;switch(sortValue){case"az":return nA.localeCompare(nB);case"za":return nB.localeCompare(nA);case"copiesAsc":return cA-cB;case"copiesDesc":return cB-cA;case"playtimeDesc":return getTotalPlaytime(b.appid)-getTotalPlaytime(a.appid);case"playtimeAsc":return getTotalPlaytime(a.appid)-getTotalPlaytime(b.appid);default:return 0}});
+  grid.className = "grid" + (viewMode==="list" ? " list-view" : "");
   grid.innerHTML="";
   if(filtered.length===0){grid.innerHTML='<div class="empty">Aucun jeu trouvé.</div>'}
   filtered.forEach(g=>grid.appendChild(createCard(g)));
@@ -242,6 +286,15 @@ function renderGrid(){
 document.getElementById("sizeSlider").addEventListener("input",e=>{document.documentElement.style.setProperty("--card-size",e.target.value+"px");savePrefs()});
 document.getElementById("searchBar").addEventListener("input",renderGrid);
 document.getElementById("sortSelect").addEventListener("change",renderGrid);
+document.getElementById("playtimeFilter").addEventListener("change",renderGrid);
+
+document.getElementById("viewToggle").addEventListener("click",e=>{
+  const btn=e.target.closest("button[data-mode]");
+  if(!btn) return;
+  viewMode = btn.dataset.mode;
+  document.querySelectorAll("#viewToggle button").forEach(b=>b.classList.toggle("active", b===btn));
+  renderGrid();
+});
 
 document.getElementById("refreshBtn").addEventListener("click",()=>loadLibrary(true));
 
@@ -365,6 +418,23 @@ async function mapLimit(items, limit, fn){
   return results;
 }
 
+function showSkeletons(n){
+  const grid=document.getElementById("grid");
+  grid.className = "grid";
+  grid.style.display = "grid";
+  let html = "";
+  for(let i=0;i<n;i++){
+    html += `<div class="game-card skeleton-card">
+      <div class="poster skeleton-shimmer"></div>
+      <div class="meta">
+        <div class="skel-line skeleton-shimmer"></div>
+        <div class="skel-line skel-line short skeleton-shimmer"></div>
+      </div>
+    </div>`;
+  }
+  grid.innerHTML = html;
+}
+
 async function loadLibrary(forceFresh){
   const loader=document.getElementById("loader"),error=document.getElementById("error"),grid=document.getElementById("grid");
   error.style.display="none";
@@ -383,7 +453,8 @@ async function loadLibrary(forceFresh){
 
   if(!API_KEY||STEAM_IDS.length===0){openSetup();return}
 
-  loader.style.display= allGames.length>0 ? "none" : "block";
+  if(allGames.length===0){ showSkeletons(12); loader.style.display="none"; }
+  else { loader.style.display="none"; }
   try{
     const playersJson=await fetchJson(`https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=${API_KEY}&steamids=${STEAM_IDS.join(",")}`);
     const players=(playersJson.response&&playersJson.response.players)?playersJson.response.players:[];
@@ -423,6 +494,7 @@ async function loadLibrary(forceFresh){
   }catch(err){
     loader.style.display="none";
     if(allGames.length===0){
+      grid.style.display="none";grid.innerHTML="";
       error.style.display="block";
       error.textContent="Erreur : "+String(err)+" — vérifie ta clé API, tes SteamID64, et que les profils sont publics. Plusieurs proxys CORS gratuits ont été essayés et ont tous échoué ; ils sont parfois temporairement indisponibles, réessaie dans quelques minutes.";
     }
@@ -585,6 +657,11 @@ document.getElementById("detailsModal").addEventListener("click",e=>{if(e.target
   if(prefs.sort) document.getElementById("sortSelect").value = prefs.sort;
   if(prefs.size){ document.getElementById("sizeSlider").value = prefs.size; document.documentElement.style.setProperty("--card-size", prefs.size+"px"); }
   if(Array.isArray(prefs.selectedOwners)) selectedOwners = new Set(prefs.selectedOwners);
+  if(prefs.playtimeFilter) document.getElementById("playtimeFilter").value = prefs.playtimeFilter;
+  if(prefs.viewMode==="list"){
+    viewMode="list";
+    document.querySelectorAll("#viewToggle button").forEach(b=>b.classList.toggle("active", b.dataset.mode==="list"));
+  }
 })();
 
 loadLibrary(false);
