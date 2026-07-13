@@ -70,6 +70,7 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 .details-info{flex:1;min-width:220px}
 .details-info h2{margin:0 0 14px 0;font-size:22px}
 .details-owners{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+.details-owners img{width:36px;height:36px;border-radius:50%;object-fit:cover;background:var(--avatar-placeholder)}
 .steam-link-btn{display:inline-block;padding:10px 20px;background:var(--accent);color:#fff;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px}
 .steam-link-btn:hover{background:#0b67a4}
 .dlc-section{margin-top:26px}
@@ -166,18 +167,22 @@ Chaque profil Steam doit avoir ses <b>Détails du jeu</b> réglés sur "Public" 
 
 <script>
 // Plusieurs proxys CORS de secours : si le premier est en panne / rate-limité,
-// on essaie automatiquement le suivant.
+// on essaie automatiquement le suivant. On mémorise celui qui a marché pour
+// l'essayer en premier la prochaine fois (accélère nettement les requêtes suivantes).
 const PROXIES = [
   url => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(url),
   url => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url),
   url => "https://corsproxy.io/?url=" + encodeURIComponent(url),
   url => "https://thingproxy.freeboard.io/fetch/" + url
 ];
+let lastGoodProxyIndex = 0;
 let API_KEY = localStorage.getItem("sf_apiKey") || "";
 let STEAM_IDS = JSON.parse(localStorage.getItem("sf_steamIds") || "[]");
 let allGames = [], playersData = {};
-let ownedAppIdsByOwner = {}; // { steamid: Set(appid) }
+let ownedAppIdsByOwner = {}; // { steamid: Set(appid) } — jeux de base uniquement
 const appDetailsCache = {}; // { appid: data|null }
+const dlcOwnershipCache = {}; // { gameAppid: { dlcAppid: [ownerIds] } }
+let currentDetailsAppId = null; // évite qu'un vieux fetch écrase l'affichage du jeu courant
 
 function loadCache(k){try{const s=localStorage.getItem(k);return s?JSON.parse(s):null}catch{return null}}
 function saveCache(k,d){try{localStorage.setItem(k,JSON.stringify(d))}catch{}}
@@ -263,15 +268,18 @@ async function fetchWithTimeout(url, ms){
 async function fetchJson(url){
   let lastErr = null;
   const attempts = [];
-  for(const buildProxyUrl of PROXIES){
+  const order = [lastGoodProxyIndex, ...PROXIES.map((_,i)=>i).filter(i=>i!==lastGoodProxyIndex)];
+  for(const proxyIndex of order){
+    const buildProxyUrl = PROXIES[proxyIndex];
     const proxyUrl = buildProxyUrl(url);
     try{
-      const res = await fetchWithTimeout(proxyUrl, 12000);
+      const res = await fetchWithTimeout(proxyUrl, 7000);
       if(!res.ok){ lastErr = new Error("HTTP "+res.status); attempts.push({proxyUrl, result:"HTTP "+res.status}); continue; }
       const text = await res.text();
       try{
         const parsed = JSON.parse(text);
         attempts.push({proxyUrl, result:"OK"});
+        lastGoodProxyIndex = proxyIndex;
         return parsed;
       }catch{
         lastErr = new Error("Réponse invalide du proxy (pas du JSON)");
@@ -286,6 +294,19 @@ async function fetchJson(url){
   }
   console.error("Steam Family — tous les proxys ont échoué :", attempts);
   throw lastErr || new Error("Tous les proxys CORS ont échoué");
+}
+
+async function mapLimit(items, limit, fn){
+  const results = new Array(items.length);
+  let idx = 0;
+  async function worker(){
+    while(idx < items.length){
+      const current = idx++;
+      results[current] = await fn(items[current], current);
+    }
+  }
+  await Promise.all(Array.from({length: Math.min(limit, items.length)}, worker));
+  return results;
 }
 
 async function loadLibrary(forceFresh){
@@ -346,8 +367,29 @@ async function loadLibrary(forceFresh){
 }
 
 // --- Détails d'un jeu + DLC ---
-function getOwnersOfAppId(appid){
-  return STEAM_IDS.filter(id => ownedAppIdsByOwner[id] && ownedAppIdsByOwner[id].has(Number(appid)));
+
+// GetOwnedGames ne renvoie quasiment jamais les DLC dans la liste normale des
+// jeux, même quand on les possède. Pour vérifier une possession de DLC, il
+// faut interroger chaque possesseur avec le paramètre non-documenté
+// appids_filter, qui lui renvoie bien les DLC filtrés s'ils sont possédés.
+async function checkDlcOwnership(dlcIds){
+  const filterParams = dlcIds.map((id,i)=>`appids_filter[${i}]=${id}`).join("&");
+  const results = await mapLimit(STEAM_IDS, 6, async ownerId=>{
+    try{
+      const url = `https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=${API_KEY}&steamid=${ownerId}&include_appinfo=0&include_played_free_games=1&${filterParams}`;
+      const data = await fetchJson(url);
+      const games = (data.response && data.response.games) ? data.response.games : [];
+      return {ownerId, owned: games.map(g=>Number(g.appid))};
+    }catch(e){
+      return {ownerId, owned: []};
+    }
+  });
+  const ownersByAppid = {};
+  dlcIds.forEach(id=>{ownersByAppid[id]=[]});
+  results.forEach(({ownerId, owned})=>{
+    owned.forEach(aid=>{ if(ownersByAppid[aid]) ownersByAppid[aid].push(ownerId) });
+  });
+  return ownersByAppid;
 }
 
 async function getAppDetails(appid){
@@ -389,28 +431,42 @@ function renderDetailsHeader(g){
 async function openGameDetails(g){
   const modal=document.getElementById("detailsModal");
   const body=document.getElementById("detailsBody");
+  currentDetailsAppId = g.appid;
+  const thisAppId = g.appid;
+
   body.innerHTML = renderDetailsHeader(g);
   modal.classList.add("active");
 
   try{
     const info = await getAppDetails(g.appid);
+    if(currentDetailsAppId !== thisAppId) return; // un autre jeu a été ouvert entretemps
+
     const dlcIds = (info && Array.isArray(info.dlc)) ? info.dlc : [];
     const loaderEl = document.getElementById("dlcLoader");
-    if(!loaderEl) return; // modal was closed/reopened in the meantime
+    if(!loaderEl) return;
 
     if(dlcIds.length===0){
       loaderEl.outerHTML = '<div class="empty">Aucun DLC disponible pour ce jeu.</div>';
       return;
     }
-    loaderEl.outerHTML = `<div class="dlc-grid" id="dlcGrid"><div class="dlc-loader">Chargement de ${dlcIds.length} DLC…</div></div>`;
-    const dlcGrid = document.getElementById("dlcGrid");
 
-    const results = await Promise.all(dlcIds.map(id => getAppDetails(id).then(d=>({id,d})).catch(()=>({id,d:null}))));
-    if(!document.getElementById("dlcGrid")) return; // closed meanwhile
+    loaderEl.outerHTML = `<div class="dlc-grid" id="dlcGrid-${thisAppId}"><div class="dlc-loader">Chargement de ${dlcIds.length} DLC…</div></div>`;
+
+    // Noms/images des DLC (limité en concurrence pour éviter le rate-limit Steam)
+    // + vérification réelle de possession en parallèle.
+    const [detailsResults, ownershipMap] = await Promise.all([
+      mapLimit(dlcIds, 5, id => getAppDetails(id).then(d=>({id,d})).catch(()=>({id,d:null}))),
+      dlcOwnershipCache[thisAppId] ? Promise.resolve(dlcOwnershipCache[thisAppId]) : checkDlcOwnership(dlcIds)
+    ]);
+    if(currentDetailsAppId !== thisAppId) return; // vérif à nouveau après les fetch DLC
+    dlcOwnershipCache[thisAppId] = ownershipMap;
+
+    const dlcGrid = document.getElementById(`dlcGrid-${thisAppId}`);
+    if(!dlcGrid) return;
 
     dlcGrid.innerHTML="";
-    results.forEach(({id,d})=>{
-      const owners = getOwnersOfAppId(id);
+    detailsResults.forEach(({id,d})=>{
+      const owners = ownershipMap[id] || [];
       const name = (d && d.name) ? d.name : ("DLC "+id);
       const img = (d && d.header_image) ? d.header_image : `https://cdn.cloudflare.steamstatic.com/steam/apps/${id}/header.jpg`;
       const card = document.createElement("div");
@@ -422,13 +478,14 @@ async function openGameDetails(g){
       dlcGrid.appendChild(card);
     });
   }catch(e){
+    if(currentDetailsAppId !== thisAppId) return;
     const loaderEl = document.getElementById("dlcLoader");
     if(loaderEl) loaderEl.textContent = "Impossible de charger les DLC : "+e;
   }
 }
 
-document.getElementById("closeDetails").addEventListener("click",()=>document.getElementById("detailsModal").classList.remove("active"));
-document.getElementById("detailsModal").addEventListener("click",e=>{if(e.target.id==="detailsModal")document.getElementById("detailsModal").classList.remove("active")});
+document.getElementById("closeDetails").addEventListener("click",()=>{currentDetailsAppId=null;document.getElementById("detailsModal").classList.remove("active")});
+document.getElementById("detailsModal").addEventListener("click",e=>{if(e.target.id==="detailsModal"){currentDetailsAppId=null;document.getElementById("detailsModal").classList.remove("active")}});
 
 loadLibrary(false);
 </script>
