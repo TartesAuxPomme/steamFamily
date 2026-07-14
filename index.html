@@ -149,6 +149,7 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 .achv-owners{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
 .achv-owners img{width:18px;height:18px;border-radius:50%;object-fit:cover;background:var(--avatar-placeholder)}
 .achv-none{font-size:11px;color:var(--muted);margin-top:6px}
+.achv-progress{font-size:11px;color:var(--muted);margin-top:2px}
 @media (max-width:768px){.setup-content{padding:30px 15px}.details-content{padding:20px}.details-header{gap:16px}.details-poster{width:140px}}
 </style>
 </head>
@@ -166,8 +167,10 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 <main>
 <input id="searchBar" type="text" placeholder="Rechercher un jeu...">
 <div class="stats-bar" id="statsBar" style="display:none;"></div>
+<div class="stats-bar" id="spendingBar" style="display:none;"></div>
 <div class="refresh-row">
 <button class="refresh-btn" id="refreshBtn">🔄 Actualiser</button>
+<button class="refresh-btn" id="calcPricesBtn" title="Récupère le prix boutique de chaque jeu (peut prendre un moment, résultat mis en cache)">💰 Calculer les prix</button>
 <span class="last-updated" id="lastUpdated"></span>
 </div>
 <div class="common-picker">
@@ -186,12 +189,15 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 <option value="copiesDesc">Copies ↓</option>
 <option value="playtimeDesc">Temps de jeu ↓</option>
 <option value="playtimeAsc">Temps de jeu ↑</option>
+<option value="priceDesc">Prix ↓</option>
+<option value="priceAsc">Prix ↑</option>
 </select>
 <select id="playtimeFilter">
 <option value="all">Tous les jeux</option>
 <option value="never">🕸️ Jamais joués</option>
 <option value="heavy">🔥 Très joués (100h+)</option>
 </select>
+<button class="fav-toggle-btn" id="favToggleBtn" title="N'afficher que les favoris">★ Favoris</button>
 <div class="view-toggle" id="viewToggle">
 <button data-mode="grid" class="active" title="Vue grille">▦</button>
 <button data-mode="list" title="Vue liste">☰</button>
@@ -225,7 +231,7 @@ Obtiens ta clé sur <b>steamcommunity.com/dev/apikey</b>. Elle est stockée uniq
 <input type="text" id="idsInput" placeholder="76561199797208434, 76561199428937867, ...">
 </div>
 <div class="hint">
-Chaque profil Steam doit avoir ses <b>Détails du jeu</b> réglés sur "Public" (Confidentialité du profil) pour que la bibliothèque soit visible. Trouve un SteamID64 sur des sites comme steamid.io.
+Chaque profil Steam doit avoir ses <b>Détails du jeu</b> réglés sur "Public" (Confidentialité du profil) pour que la bibliothèque soit visible. Pour les succès, la statistique "Succès Steam publics" doit aussi être publique. Trouve un SteamID64 sur des sites comme steamid.io.
 </div>
 <button class="save-setup" id="saveSetupBtn">Enregistrer et charger</button>
 <button class="close-modal" id="cancelSetupBtn">Annuler</button>
@@ -253,6 +259,14 @@ let currentDetailsAppId = null; // évite qu'un vieux fetch écrase l'affichage 
 let selectedOwners = new Set(); // pour le sélecteur "jeux en commun"
 let viewMode = "grid"; // "grid" | "list"
 
+// --- Favoris ---
+let favorites = new Set((loadCache("sf_favorites") || []).map(Number));
+let favoritesOnly = false;
+
+// --- Prix ---
+let priceCache = loadCache("sf_priceCache") || {}; // { appid: {cents, currency, isFree, formatted} | null }
+let pricesComputed = Object.keys(priceCache).length > 0;
+
 function loadPrefs(){try{return JSON.parse(localStorage.getItem("sf_prefs")||"{}")}catch{return {}}}
 function savePrefs(){
   saveCache("sf_prefs", {
@@ -261,7 +275,8 @@ function savePrefs(){
     size: document.getElementById("sizeSlider").value,
     selectedOwners: Array.from(selectedOwners),
     viewMode: viewMode,
-    playtimeFilter: document.getElementById("playtimeFilter").value
+    playtimeFilter: document.getElementById("playtimeFilter").value,
+    favoritesOnly: favoritesOnly
   });
 }
 
@@ -269,9 +284,54 @@ function loadCache(k){try{const s=localStorage.getItem(k);return s?JSON.parse(s)
 function saveCache(k,d){try{localStorage.setItem(k,JSON.stringify(d))}catch{}}
 function sameData(a,b){if(!a||!b||a.length!==b.length)return false;const sa=[...a].sort((x,y)=>x.appid-y.appid),sb=[...b].sort((x,y)=>x.appid-y.appid);for(let i=0;i<sa.length;i++){if(sa[i].appid!==sb[i].appid||sa[i].name!==sb[i].name)return false;const oa=(sa[i].owners||[]).map(String).sort(),ob=(sb[i].owners||[]).map(String).sort();if(oa.length!==ob.length)return false;for(let j=0;j<oa.length;j++)if(oa[j]!==ob[j])return false}return true}
 
+function saveFavorites(){ saveCache("sf_favorites", Array.from(favorites)); }
+function toggleFavorite(appid){
+  appid = Number(appid);
+  if(favorites.has(appid)) favorites.delete(appid);
+  else favorites.add(appid);
+  saveFavorites();
+}
+function syncFavUi(appid, active){
+  const cardStar = document.querySelector(`.game-card[data-appid="${appid}"] .fav-star`);
+  if(cardStar){ cardStar.classList.toggle("active", active); cardStar.textContent = active ? "★" : "☆"; }
+  const detailsFavBtn = document.getElementById("detailsFavBtn");
+  if(detailsFavBtn && currentDetailsAppId === appid){
+    detailsFavBtn.classList.toggle("active", active);
+    detailsFavBtn.textContent = active ? "★ Favori" : "☆ Ajouter aux favoris";
+  }
+}
+
 function createOwner(n,a){const o=document.createElement("div");o.className="owner";const i=document.createElement("img");i.src=a||"";i.alt=n||"";const nm=document.createElement("div");nm.className="o-name";nm.textContent=n||"";o.appendChild(i);o.appendChild(nm);return o}
 
-function createCard(g){const c=document.createElement("div");c.className="game-card";c.dataset.appid=String(g.appid);const p=document.createElement("div");p.className="poster";p.innerHTML=`<img loading="lazy" src="https://cdn.cloudflare.steamstatic.com/steam/apps/${g.appid}/library_600x900.jpg">`;const m=document.createElement("div");m.className="meta";m.innerHTML=`<div class="name">${g.name}</div><div class="copies">${g.owners.length} copie${g.owners.length>1?"s":""}</div>`;const t=document.createElement("div");t.className="toolbox";g.owners.forEach(oid=>{const pl=playersData[oid];t.appendChild(createOwner(pl?(pl.personaname||oid):oid,pl?(pl.avatarfull||""):""))});c.appendChild(p);c.appendChild(m);c.appendChild(t);c.addEventListener("click",()=>openGameDetails(g));return c}
+function createCard(g){
+  const c=document.createElement("div");c.className="game-card";c.dataset.appid=String(g.appid);
+  const fav=document.createElement("button");
+  fav.className="fav-star"+(favorites.has(g.appid)?" active":"");
+  fav.type="button";
+  fav.title="Ajouter/retirer des favoris";
+  fav.textContent=favorites.has(g.appid)?"★":"☆";
+  fav.addEventListener("click",e=>{
+    e.stopPropagation();
+    toggleFavorite(g.appid);
+    const active=favorites.has(g.appid);
+    fav.classList.toggle("active",active);
+    fav.textContent=active?"★":"☆";
+    syncFavUi(g.appid,active);
+    if(favoritesOnly) renderGrid();
+  });
+  const p=document.createElement("div");p.className="poster";p.innerHTML=`<img loading="lazy" src="https://cdn.cloudflare.steamstatic.com/steam/apps/${g.appid}/library_600x900.jpg">`;
+  const m=document.createElement("div");m.className="meta";
+  const priceEntry=priceCache[g.appid];
+  const priceHtml = priceEntry ? (priceEntry.isFree ? "Gratuit" : formatUsd(priceEntry.cents)) : "";
+  m.innerHTML=`<div class="name">${g.name}</div><div class="copies">${g.owners.length} copie${g.owners.length>1?"s":""}${priceHtml?" · "+priceHtml:""}</div>`;
+  const t=document.createElement("div");t.className="toolbox";g.owners.forEach(oid=>{const pl=playersData[oid];t.appendChild(createOwner(pl?(pl.personaname||oid):oid,pl?(pl.avatarfull||""):""))});
+  c.appendChild(fav);
+  c.appendChild(p);
+  c.appendChild(m);
+  c.appendChild(t);
+  c.addEventListener("click",()=>openGameDetails(g));
+  return c;
+}
 
 function getTotalPlaytime(appid){
   const pt = gamePlaytimeByOwner[appid];
@@ -283,6 +343,11 @@ function getMaxPlaytime(appid){
   if(!pt) return 0;
   return Math.max(0, ...Object.values(pt));
 }
+function getGamePriceCents(appid){
+  const p=priceCache[appid];
+  if(!p) return null;
+  return p.cents||0;
+}
 
 function renderGrid(){
   const grid=document.getElementById("grid"),search=document.getElementById("searchBar").value.toLowerCase(),sortValue=document.getElementById("sortSelect").value,playtimeFilterValue=document.getElementById("playtimeFilter").value;
@@ -291,27 +356,31 @@ function renderGrid(){
     if(selectedOwners.size>0){
       for(const oid of selectedOwners){ if(!g.owners.includes(oid)) return false }
     }
+    if(favoritesOnly && !favorites.has(g.appid)) return false;
     if(playtimeFilterValue==="never" && getTotalPlaytime(g.appid)>0) return false;
     if(playtimeFilterValue==="heavy" && getMaxPlaytime(g.appid)<6000) return false;
     return true;
   });
-  filtered.sort((a,b)=>{const nA=a.name.toLowerCase(),nB=b.name.toLowerCase(),cA=a.owners.length,cB=b.owners.length;switch(sortValue){case"az":return nA.localeCompare(nB);case"za":return nB.localeCompare(nA);case"copiesAsc":return cA-cB;case"copiesDesc":return cB-cA;case"playtimeDesc":return getTotalPlaytime(b.appid)-getTotalPlaytime(a.appid);case"playtimeAsc":return getTotalPlaytime(a.appid)-getTotalPlaytime(b.appid);default:return 0}});
+  filtered.sort((a,b)=>{const nA=a.name.toLowerCase(),nB=b.name.toLowerCase(),cA=a.owners.length,cB=b.owners.length;switch(sortValue){case"az":return nA.localeCompare(nB);case"za":return nB.localeCompare(nA);case"copiesAsc":return cA-cB;case"copiesDesc":return cB-cA;case"playtimeDesc":return getTotalPlaytime(b.appid)-getTotalPlaytime(a.appid);case"playtimeAsc":return getTotalPlaytime(a.appid)-getTotalPlaytime(b.appid);case"priceDesc":{const pa=getGamePriceCents(a.appid),pb=getGamePriceCents(b.appid);return (pb==null?-1:pb)-(pa==null?-1:pa);}case"priceAsc":{const pa=getGamePriceCents(a.appid),pb=getGamePriceCents(b.appid);return (pa==null?Infinity:pa)-(pb==null?Infinity:pb);}default:return 0}});
   grid.className = "grid" + (viewMode==="list" ? " list-view" : "");
   grid.innerHTML="";
-  if(filtered.length===0){grid.innerHTML='<div class="empty">Aucun jeu trouvé.</div>'}
+  if(filtered.length===0){grid.innerHTML=`<div class="empty">Aucun jeu trouvé${favoritesOnly?" dans les favoris":""}.</div>`}
   filtered.forEach(g=>grid.appendChild(createCard(g)));
 
   const countEl=document.getElementById("resultCount");
+  let countText;
   if(selectedOwners.size>=2){
     const names=Array.from(selectedOwners).map(oid=>playersData[oid]?playersData[oid].personaname:oid);
-    countEl.textContent = `${filtered.length} jeu${filtered.length>1?"x":""} en commun entre ${names.join(", ")}`;
+    countText = `${filtered.length} jeu${filtered.length>1?"x":""} en commun entre ${names.join(", ")}`;
   } else if(selectedOwners.size===1){
     const oid=Array.from(selectedOwners)[0];
     const name=playersData[oid]?playersData[oid].personaname:oid;
-    countEl.textContent = `${filtered.length} jeu${filtered.length>1?"x":""} chez ${name}`;
+    countText = `${filtered.length} jeu${filtered.length>1?"x":""} chez ${name}`;
   } else {
-    countEl.textContent = `${filtered.length} jeu${filtered.length>1?"x":""} au total`;
+    countText = `${filtered.length} jeu${filtered.length>1?"x":""} au total`;
   }
+  if(favoritesOnly) countText += " ★";
+  countEl.textContent = countText;
   savePrefs();
 }
 
@@ -319,6 +388,12 @@ document.getElementById("sizeSlider").addEventListener("input",e=>{document.docu
 document.getElementById("searchBar").addEventListener("input",renderGrid);
 document.getElementById("sortSelect").addEventListener("change",renderGrid);
 document.getElementById("playtimeFilter").addEventListener("change",renderGrid);
+
+document.getElementById("favToggleBtn").addEventListener("click",()=>{
+  favoritesOnly=!favoritesOnly;
+  document.getElementById("favToggleBtn").classList.toggle("active",favoritesOnly);
+  renderGrid();
+});
 
 document.getElementById("viewToggle").addEventListener("click",e=>{
   const btn=e.target.closest("button[data-mode]");
@@ -329,6 +404,7 @@ document.getElementById("viewToggle").addEventListener("click",e=>{
 });
 
 document.getElementById("refreshBtn").addEventListener("click",()=>loadLibrary(true));
+document.getElementById("calcPricesBtn").addEventListener("click",()=>computePrices());
 
 document.addEventListener("keydown",e=>{
   if(e.key!=="Escape") return;
@@ -478,7 +554,88 @@ function computeAndRenderStats(){
     <div class="stat-card"><div class="stat-value">${formatPlaytime(totalMinutes)}</div><div class="stat-label">Temps de jeu cumulé (tous confondus)</div></div>
     <div class="stat-card"><div class="stat-value">👑 ${topOwnerName}</div><div class="stat-label">Le no-life du groupe (${formatPlaytime(topOwnerMinutes>0?topOwnerMinutes:0)})</div></div>
     <div class="stat-card"><div class="stat-value">🏆 ${topGame ? topGame.name : "—"}</div><div class="stat-label">Jeu le plus chronophage (${formatPlaytime(topGameMinutes>0?topGameMinutes:0)})</div></div>
+    <div class="stat-card"><div class="stat-value">★ ${favorites.size}</div><div class="stat-label">Jeux en favoris</div></div>
   `;
+}
+
+function formatUsd(cents){
+  if(cents==null) return "?";
+  return "$"+(cents/100).toFixed(2);
+}
+
+function renderSpendingStats(){
+  const bar=document.getElementById("spendingBar");
+  if(!pricesComputed || allGames.length===0){ bar.style.display="none"; return; }
+
+  let totalCents=0, unknownCount=0;
+  allGames.forEach(g=>{
+    const p=priceCache[g.appid];
+    if(!p) unknownCount++;
+    else totalCents += p.cents||0;
+  });
+
+  const spendByOwner={};
+  allGames.forEach(g=>{
+    const p=priceCache[g.appid];
+    if(!p) return;
+    g.owners.forEach(oid=>{ spendByOwner[oid]=(spendByOwner[oid]||0)+(p.cents||0); });
+  });
+
+  let topSpenderId=null, topSpenderCents=-1;
+  Object.keys(spendByOwner).forEach(oid=>{
+    if(spendByOwner[oid]>topSpenderCents){ topSpenderCents=spendByOwner[oid]; topSpenderId=oid; }
+  });
+  const topSpenderName = (topSpenderId!==null && playersData[topSpenderId]) ? playersData[topSpenderId].personaname : "—";
+
+  const ownerCards = Object.keys(spendByOwner).map(oid=>{
+    const pl=playersData[oid]; const name = pl?pl.personaname:oid;
+    return `<div class="stat-card"><div class="stat-value">${formatUsd(spendByOwner[oid])}</div><div class="stat-label">Dépensé (valeur boutique) par ${name}</div></div>`;
+  }).join("");
+
+  bar.style.display="flex";
+  bar.innerHTML = `
+    <div class="stat-card"><div class="stat-value">${formatUsd(totalCents)}</div><div class="stat-label">Valeur totale de la bibliothèque${unknownCount?` (${unknownCount} jeu${unknownCount>1?"x":""} inconnu${unknownCount>1?"s":""})`:""}</div></div>
+    <div class="stat-card"><div class="stat-value">💸 ${topSpenderName}</div><div class="stat-label">Plus grosse dépense (${formatUsd(topSpenderCents>0?topSpenderCents:0)})</div></div>
+    ${ownerCards}
+  `;
+}
+
+async function fetchPriceForApp(appid){
+  if(Object.prototype.hasOwnProperty.call(priceCache, appid)) return priceCache[appid];
+  const info = await getAppDetails(appid);
+  let entry;
+  if(info && info.is_free){
+    entry = {cents:0, currency:"USD", isFree:true, formatted:"Gratuit"};
+  } else if(info && info.price_overview){
+    entry = {cents:info.price_overview.final, currency:info.price_overview.currency, isFree:false, formatted:info.price_overview.final_formatted};
+  } else {
+    entry = null; // retiré du store, non trouvé, ou infos indisponibles
+  }
+  priceCache[appid] = entry;
+  return entry;
+}
+
+async function computePrices(){
+  const btn=document.getElementById("calcPricesBtn");
+  if(btn.disabled) return;
+  btn.disabled=true;
+  const toFetch = allGames.map(g=>g.appid).filter(id=>!Object.prototype.hasOwnProperty.call(priceCache,id));
+  const total=toFetch.length;
+  if(total>0){
+    let done=0;
+    btn.textContent = `⏳ 0/${total}…`;
+    await mapLimit(toFetch, 4, async(id)=>{
+      await fetchPriceForApp(id);
+      done++;
+      btn.textContent = `⏳ ${done}/${total}…`;
+    });
+    saveCache("sf_priceCache", priceCache);
+  }
+  pricesComputed = true;
+  btn.disabled=false;
+  btn.textContent = "💰 Recalculer les prix";
+  renderSpendingStats();
+  renderGrid();
 }
 
 function showSkeletons(n){
@@ -511,7 +668,7 @@ async function loadLibrary(forceFresh){
     if(cachedOwned){ownedAppIdsByOwner={};Object.keys(cachedOwned).forEach(k=>ownedAppIdsByOwner[k]=new Set(cachedOwned[k]))}
     const cachedPlaytime=loadCache("sf_playtime");
     if(cachedPlaytime){gamePlaytimeByOwner=cachedPlaytime}
-    if(allGames.length>0){loader.style.display="none";grid.style.display="grid";renderGrid();computeAndRenderStats();}
+    if(allGames.length>0){loader.style.display="none";grid.style.display="grid";renderGrid();computeAndRenderStats();renderSpendingStats();}
   }
 
   if(!API_KEY||STEAM_IDS.length===0){openSetup();return}
@@ -554,6 +711,7 @@ async function loadLibrary(forceFresh){
 
     loader.style.display="none";grid.style.display="grid";renderGrid();
     computeAndRenderStats();
+    renderSpendingStats();
     setLastUpdated();
   }catch(err){
     loader.style.display="none";
@@ -642,19 +800,27 @@ function ownersAvatarsHtml(owners){
 
 function renderDetailsHeader(g){
   const owners = g.owners || [];
+  const isFav = favorites.has(g.appid);
   return `
     <div class="details-header">
       <div class="details-poster"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/${g.appid}/library_600x900.jpg" alt="${g.name}"></div>
       <div class="details-info">
         <h2>${g.name}</h2>
         <div class="details-owners">${ownersAvatarsHtml(owners)}</div>
+        <div class="price-line" id="priceLine-${g.appid}">Chargement du prix…</div>
         <a class="steam-link-btn" href="https://store.steampowered.com/app/${g.appid}" target="_blank" rel="noopener">Voir sur Steam ↗</a>
+        <button type="button" class="details-fav-btn${isFav?" active":""}" id="detailsFavBtn">${isFav?"★ Favori":"☆ Ajouter aux favoris"}</button>
       </div>
     </div>
     ${renderPlaytimeSection(g)}
     <div class="dlc-section">
       <h3>DLC</h3>
       <div class="dlc-loader" id="dlcLoader">Chargement des DLC…</div>
+    </div>
+    <div class="achv-section">
+      <h3>Succès</h3>
+      <button type="button" class="achv-toggle" id="achvToggle-${g.appid}">Afficher les succès</button>
+      <div id="achvContainer-${g.appid}"></div>
     </div>
   `;
 }
@@ -669,9 +835,43 @@ async function openGameDetails(g){
   modal.classList.add("active");
   animatePlaytimeBars();
 
+  const detailsFavBtn = document.getElementById("detailsFavBtn");
+  if(detailsFavBtn){
+    detailsFavBtn.addEventListener("click",()=>{
+      toggleFavorite(g.appid);
+      const active = favorites.has(g.appid);
+      detailsFavBtn.classList.toggle("active", active);
+      detailsFavBtn.textContent = active ? "★ Favori" : "☆ Ajouter aux favoris";
+      syncFavUi(g.appid, active);
+    });
+  }
+
+  const achvToggle = document.getElementById(`achvToggle-${thisAppId}`);
+  if(achvToggle){
+    achvToggle.addEventListener("click", ()=>loadAchievements(g, thisAppId), {once:true});
+  }
+
   try{
     const info = await getAppDetails(g.appid);
     if(currentDetailsAppId !== thisAppId) return; // un autre jeu a été ouvert entretemps
+
+    // Prix
+    const priceLineEl = document.getElementById(`priceLine-${thisAppId}`);
+    if(priceLineEl){
+      if(info && info.is_free){
+        priceCache[thisAppId] = {cents:0, currency:"USD", isFree:true, formatted:"Gratuit"};
+        priceLineEl.innerHTML = `<strong>Gratuit</strong>`;
+      } else if(info && info.price_overview){
+        const po = info.price_overview;
+        priceCache[thisAppId] = {cents:po.final, currency:po.currency, isFree:false, formatted:po.final_formatted};
+        priceLineEl.innerHTML = po.discount_percent>0
+          ? `<strong>${po.final_formatted}</strong> <span style="text-decoration:line-through;opacity:.6">${po.initial_formatted}</span> (-${po.discount_percent}%)`
+          : `<strong>${po.final_formatted}</strong>`;
+      } else {
+        priceLineEl.textContent = "Prix indisponible (retiré du store ou infos manquantes)";
+      }
+      saveCache("sf_priceCache", priceCache);
+    }
 
     const dlcIds = (info && Array.isArray(info.dlc)) ? info.dlc : [];
     const loaderEl = document.getElementById("dlcLoader");
@@ -711,10 +911,87 @@ async function openGameDetails(g){
   }
 }
 
+// --- Succès ---
+async function loadAchievements(g, thisAppId){
+  const container = document.getElementById(`achvContainer-${thisAppId}`);
+  const toggleBtn = document.getElementById(`achvToggle-${thisAppId}`);
+  if(!container) return;
+  if(toggleBtn) toggleBtn.style.display = "none";
+  container.innerHTML = `<div class="achv-loader">Chargement des succès…</div>`;
+
+  try{
+    const schemaJson = await fetchJson(`https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key=${API_KEY}&appid=${g.appid}&l=french`);
+    if(currentDetailsAppId !== thisAppId) return;
+    const achievements = (schemaJson.game && schemaJson.game.availableGameStats && schemaJson.game.availableGameStats.achievements) || [];
+
+    if(achievements.length===0){
+      container.innerHTML = `<div class="achv-none">Ce jeu n'a pas de succès Steam.</div>`;
+      return;
+    }
+
+    const owners = g.owners;
+    let progress = 0;
+    container.innerHTML = `<div class="achv-progress">Récupération des succès pour ${owners.length} propriétaire(s)…</div>`;
+
+    const perOwnerResults = await mapLimit(owners, 4, async oid=>{
+      try{
+        const j = await fetchJson(`https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v0001/?key=${API_KEY}&steamid=${oid}&appid=${g.appid}&l=french`);
+        progress++;
+        const progEl = container.querySelector(".achv-progress");
+        if(progEl) progEl.textContent = `Récupération des succès pour ${owners.length} propriétaire(s)… (${progress}/${owners.length})`;
+        if(j.playerstats && j.playerstats.success && Array.isArray(j.playerstats.achievements)){
+          const map={};
+          j.playerstats.achievements.forEach(a=>{ map[a.apiname]=!!a.achieved; });
+          return {oid, map, ok:true};
+        }
+        return {oid, map:{}, ok:false};
+      }catch{ return {oid, map:{}, ok:false}; }
+    });
+    if(currentDetailsAppId !== thisAppId) return;
+
+    const anyOk = perOwnerResults.some(r=>r.ok);
+    if(!anyOk){
+      container.innerHTML = `<div class="achv-none">Statistiques de succès privées ou indisponibles pour ce jeu (vérifie que "Succès Steam publics" est public sur le profil).</div>`;
+      return;
+    }
+
+    // Succès obtenus par au moins une personne en premier
+    const sorted = [...achievements].sort((a,b)=>{
+      const aGot = perOwnerResults.some(r=>r.map[a.name]) ? 1 : 0;
+      const bGot = perOwnerResults.some(r=>r.map[b.name]) ? 1 : 0;
+      return bGot - aGot;
+    });
+
+    const gotCountAny = sorted.filter(a=>perOwnerResults.some(r=>r.map[a.name])).length;
+
+    container.innerHTML = `
+      <div class="achv-progress">${gotCountAny}/${achievements.length} succès débloqués par au moins un membre</div>
+      <div class="achv-grid">${sorted.map(a=>{
+        const gotBy = perOwnerResults.filter(r=>r.map[a.name]).map(r=>r.oid);
+        const icon = gotBy.length>0 ? a.icon : (a.icongray||a.icon);
+        const ownersHtml = gotBy.length
+          ? `<div class="achv-owners">${gotBy.map(oid=>{const pl=playersData[oid];const name=pl?pl.personaname:oid;const av=pl?(pl.avatarfull||pl.avatar||""):"";return `<img title="${name}" alt="${name}" src="${av}">`}).join("")}</div>`
+          : `<div class="achv-none">Personne ne l'a débloqué</div>`;
+        return `<div class="achv-card${gotBy.length?"":" not-owned"}">
+          <img class="achv-icon" src="${icon||""}" alt="">
+          <div class="achv-info">
+            <div class="achv-name">${a.displayName||a.name}</div>
+            <div class="achv-desc">${a.description||""}</div>
+            ${ownersHtml}
+          </div>
+        </div>`;
+      }).join("")}</div>
+    `;
+  }catch(e){
+    if(currentDetailsAppId !== thisAppId) return;
+    container.innerHTML = `<div class="achv-none">Impossible de charger les succès : ${e}</div>`;
+  }
+}
+
 document.getElementById("closeDetails").addEventListener("click",()=>{currentDetailsAppId=null;document.getElementById("detailsModal").classList.remove("active")});
 document.getElementById("detailsModal").addEventListener("click",e=>{if(e.target.id==="detailsModal"){currentDetailsAppId=null;document.getElementById("detailsModal").classList.remove("active")}});
 
-// Restaure les préférences (recherche/tri/taille/amis sélectionnés) de la session précédente
+// Restaure les préférences (recherche/tri/taille/amis sélectionnés/favoris) de la session précédente
 (function restorePrefs(){
   const prefs = loadPrefs();
   if(prefs.search) document.getElementById("searchBar").value = prefs.search;
@@ -722,11 +999,19 @@ document.getElementById("detailsModal").addEventListener("click",e=>{if(e.target
   if(prefs.size){ document.getElementById("sizeSlider").value = prefs.size; document.documentElement.style.setProperty("--card-size", prefs.size+"px"); }
   if(Array.isArray(prefs.selectedOwners)) selectedOwners = new Set(prefs.selectedOwners);
   if(prefs.playtimeFilter) document.getElementById("playtimeFilter").value = prefs.playtimeFilter;
+  if(prefs.favoritesOnly){
+    favoritesOnly = true;
+    document.getElementById("favToggleBtn").classList.add("active");
+  }
   if(prefs.viewMode==="list"){
     viewMode="list";
     document.querySelectorAll("#viewToggle button").forEach(b=>b.classList.toggle("active", b.dataset.mode==="list"));
   }
 })();
+
+if(pricesComputed){
+  document.getElementById("calcPricesBtn").textContent = "💰 Recalculer les prix";
+}
 
 loadLibrary(false);
 </script>
